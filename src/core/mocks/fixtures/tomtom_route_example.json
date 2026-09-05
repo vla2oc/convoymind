@@ -1,0 +1,114 @@
+{
+  "formatVersion": "0.0.12",
+  "routes": [
+    {
+      "summary": {
+        "lengthInMeters": 1147,
+        "travelTimeInSeconds": 161,
+        "trafficDelayInSeconds": 15,
+        "trafficLengthInMeters": 147,
+        "departureTime": "2015-04-02T15:01:57+02:00",
+        "arrivalTime": "2015-04-02T15:04:38+02:00",
+        "batteryConsumptionInkWh": 0.155
+      },
+      "legs": [
+        {
+          "summary": {
+            "lengthInMeters": 108,
+            "travelTimeInSeconds": 11,
+            "trafficDelayInSeconds": 0,
+            "trafficLengthInMeters": 0,
+            "departureTime": "2015-04-02T15:01:57+02:00",
+            "arrivalTime": "2015-04-02T15:02:07+02:00",
+            "batteryConsumptionInkWh": 0.1,
+            "originalWaypointIndexAtEndOfLeg": 0,
+            "userDefinedPauseTimeInSeconds": 1020,
+            "entryPointIndexAtEndOfLeg": 0
+          },
+          "points": [
+            {
+              "latitude": 52.5093087,
+              "longitude": 13.4293737
+            },
+            {
+              "latitude": 52.5090373,
+              "longitude": 13.4291258
+            }
+          ],
+          "encodedPolyline": "}lcph^qmsc_GrhD|yC",
+          "encodedPolylinePrecision": 7
+        }
+      ],
+      "progress": [
+        {
+          "pointIndex": 0,
+          "travelTimeInSeconds": 0,
+          "distanceInMeters": 0,
+          "batteryConsumptionInkWh": 0
+        },
+        {
+          "pointIndex": 5,
+          "travelTimeInSeconds": 7,
+          "distanceInMeters": 74,
+          "batteryConsumptionInkWh": 0.002
+        },
+        {
+          "pointIndex": 87,
+          "travelTimeInSeconds": 161,
+          "distanceInMeters": 1147,
+          "batteryConsumptionInkWh": 0.155
+        }
+      ],
+      "sections": [
+        {
+          "startPointIndex": 0,
+          "endPointIndex": 3,
+          "sectionType": "TRAVEL_MODE",
+          "travelMode": "other"
+        },
+        {
+          "startPointIndex": 3,
+          "endPointIndex": 7,
+          "sectionType": "TRAVEL_MODE",
+          "travelMode": "car"
+        },
+        {
+          "startPointIndex": 2,
+          "endPointIndex": 5,
+          "sectionType": "TOLL"
+        },
+        {
+          "startPointIndex": 3,
+          "endPointIndex": 4,
+          "sectionType": "TUNNEL"
+        },
+        {
+          "startPointIndex": 0,
+          "endPointIndex": 1,
+          "sectionType": "PEDESTRIAN"
+        },
+        {
+          "startPointIndex": 3,
+          "endPointIndex": 4,
+          "sectionType": "TRAFFIC",
+          "simpleCategory": "JAM",
+          "effectiveSpeedInKmh": 40,
+          "delayInSeconds": 158,
+          "magnitudeOfDelay": 1,
+          "tec": {
+            "effectCode": 4,
+            "causes": [
+              {
+                "mainCauseCode": 1
+              },
+              {
+                "mainCauseCode": 26,
+                "subCauseCode": 2
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
