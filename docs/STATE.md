@@ -4,12 +4,47 @@
 ## Для следующего агента (прочитать первым)
 
 ### Где мы
-**Фаза 3 (`docs/PHASE3_MAP.md`) ЗАВЕРШЕНА: 8 шагов из 8.** Итог — раздел «Итог фазы 3» ниже. Не проверено одно: запуск в Expo Go на телефоне (симуляторов на машине нет). Журнал шагов фазы 3 — раздел «Фаза 3: журнал шагов» ниже, читать его первым.
+**Фаза 3 (`docs/PHASE3_MAP.md`) ЗАВЕРШЕНА: 8 шагов из 8.** Итог — раздел «Итог фазы 3» ниже. Журнал шагов фазы 3 — раздел «Фаза 3: журнал шагов» ниже, читать его первым.
 
-**Фаза 1 (`docs/PHASE1_CORE.md`) завершена, фаза 2 (`docs/PHASE2_APP.md`) завершена: 7 шагов из 7.** Три экрана в `src/app/` поверх `planTrip()` из `src/core`, моки `msw/native` под `__DEV__`, тесты экранов через `@testing-library/react-native` + MSW. Не проверено только одно: запуск в Expo Go на телефоне (на машине разработчика нет симуляторов) — всё сквозное проверялось на web (`expo start --web`, Chrome). В git ничего не закоммичено (по решению пользователя — после фазы 2).
+**Expo Go на телефоне заработал 2026-09-06 — главный открытый пункт фаз 2 и 3 закрыт.** До этого приложение на телефоне не запускалось ни разу; в тот день оно упало дважды подряд на двух разных багах msw в React Native, оба закрыты полифиллами (разбор — следующий раздел). После второго фикса владелец подтвердил в чате: «так всё работает». Это **подтверждение владельца, а не мой замер**: что именно он смотрел на экране 3 — не перечислено, см. «Открытые вопросы ко мне».
+
+**Фаза 1 (`docs/PHASE1_CORE.md`) завершена, фаза 2 (`docs/PHASE2_APP.md`) завершена: 7 шагов из 7.** Три экрана в `src/app/` поверх `planTrip()` из `src/core`, моки `msw/native` под `__DEV__`, тесты экранов через `@testing-library/react-native` + MSW. Сквозное проверялось на web (`expo start --web`, Chrome), а 2026-09-06 — и в Expo Go на телефоне (симуляторов на машине разработчика по-прежнему нет, телефон запускает владелец). В git закоммичены фазы 1–3 (`b67d28b`); не закоммичены оба фикса полифиллов, правки безопасности от 2026-09-06 и документы.
+
+### Что случилось на телефоне 2026-09-06 — два бага msw в React Native
+
+Оба вылезли на стыке «msw ↔ React Native», который до этого дня не проверялся ничем, кроме web.
+Оба чинятся в одном файле — `src/core/mocks/domPolyfills.ts`, вызовы — в `msw.polyfills.js`.
+Полный разбор с цитатами из `node_modules` — в `DECISIONS.md` (2026-09-06) и `API_CONTRACT.md` § 6.
+
+1. **`Property 'MessageEvent' doesn't exist`** — падало при загрузке модулей, до любого запроса.
+   `msw` 2.15 требует DOM-классы уже на верхнем уровне: зависимость `rettime` объявляет
+   `class TypedEvent extends MessageEvent`, а `msw/lib/core/ws` делает `new BroadcastChannel(...)`
+   (его тянет любой `import { http } from 'msw'`). RN 0.86 глобально ставит только `Event`,
+   `EventTarget`, `CustomEvent` (`react-native/src/private/setup/setUpDOM.js`).
+   Чинит `installMswDomPolyfills`. Официальные полифиллы MSW (`URL`, `TextEncoder`) это НЕ закрывают.
+
+2. **`JSON Parse error: Unexpected end of input`** — мок-ответ приходил с HTTP 200 и пустым телом.
+   Глобальный `Response` в RN — из `whatwg-fetch` (`react-native/Libraries/Network/fetch.js`),
+   он на XMLHttpRequest и стримов не знает вообще: `Response.prototype.body` не существует.
+   Expo SDK 57 подменяет только глобальный `fetch` (`expo/src/winter/runtime.native.ts`), `Response`
+   оставляет от RN. А `@mswjs/interceptors` строит мок-ответ как
+   `new FetchResponse(decompressResponse(raw) || raw.body, …)` → телом становится `undefined`.
+   Чинит `installMswResponseBodyShim`: геттер `.body` отдаёт инициализатор тела (строку/Blob/`null`),
+   а НЕ `ReadableStream` — настоящий стрим конструктор `whatwg-fetch` не понимает и кладёт в тело
+   строку `"[object ReadableStream]"` (проверено, хуже исходного бага).
+
+**Уроки, которые стоят дороже самих фиксов:**
+- Зелёный `npm test` и рабочий web не говорят ничего про телефон: под Jest глобалы из Node,
+  на web — из браузера, и оба бага там структурно невоспроизводимы.
+- Поэтому есть `node scripts/msw-native-repro.cjs` — единственная локальная проверка этого стыка.
+  Запускать после любого апгрейда `msw`, `@mswjs/interceptors`, `expo` или `react-native`.
+- Шим `.body` — сознательное отступление от спецификации. Он перестанет быть безопасным, если
+  появится handler, использующий `finalize` (стриминг/SSE): тогда `msw` пойдёт в
+  `observe-response-body-stream.js` и позовёт `body.getReader()`. Условие записано в JSDoc функции.
 
 ### С чего начать (по порядку)
-1. `npm test && npm run typecheck` — ожидается **17 suites / 132 tests passed** и **exit 0** у tsc (было 14/101 до фазы 3). Если не так — чинить, дальше не идти.
+1. `npm test && npm run typecheck` — ожидается **18 suites / 140 tests passed** и **exit 0** у tsc (было 18/136 после первого фикса полифиллов, 17/132 на конец фазы 3, 14/101 до неё). Если не так — чинить, дальше не идти.
+   Осторожно: `npx tsc --noEmit | tail` печатает exit-код `tail`, а не `tsc`. Проверять `npx tsc --noEmit; echo $?`.
 2. Прочитать `docs/DECISIONS.md` и `docs/NOT_NOW.md`. Там — каждое отклонение от `PHASE1_CORE.md`/`PHASE2_APP.md` и почему. Главные:
    - Jest: два проекта — `core` (`jest-expo/node`, `__tests__/core/**`, `__tests__/ui/**`) и `screens` (`jest-expo/ios`, `__tests__/screens/**`). В `screens` `msw/node` идёт через `moduleNameMapper` на CJS, а `fetch` восстанавливается из `globalThis.originalfetch` (`jest.setup.screens.ts`).
    - `babel.config.js` обязателен для Jest; три ESM-only зависимости msw транспилируются (список в `jest.config.js`).
@@ -24,6 +59,7 @@
 ### Команды
 - `npm test` — Jest, проекты `core` и `screens`; MSW в `jest.setup.ts` / `jest.setup.screens.ts` с `onUnhandledRequest: 'error'` (любой запрос мимо handlers валит тест). Один проект: `npx jest --selectProjects screens`.
 - `npm run typecheck` — `tsc --noEmit`, покрывает и тесты.
+- `node scripts/msw-native-repro.cjs` — диагностика msw в React Native: подменяет глобалы на whatwg-fetch (как RN), резолвит msw с условием `react-native` (как Metro) и проверяет, что без полифиллов оба бага воспроизводятся, а с ними — нет. Exit 0 = всё на месте.
 - `npx expo start` — приложение (Expo Go / симулятор); `npx expo start --web` — в браузере. В консоли Metro перехваченные запросы видны как `[msw] METHOD URL`. Metro WARN «Falling back to file-based resolution» для msw — ожидаемы (DECISIONS).
 - Ключ TomTom: `.env` в корне (в `.gitignore`) — `EXPO_PUBLIC_TOMTOM_KEY=<значение локально, в документы не пишем>`; с моками годится любое непустое, там сейчас настоящий ключ (фаза 3, шаг 4). Без файла `planTrip` бросает до сети. В тестах ключ задаётся в setup-файлах.
 - Parking-API ключа не требует; в тестах и в приложении его целиком отдаёт MSW-handler.
@@ -48,7 +84,10 @@
 | `.env.example` (корень, в git) | `EXPO_PUBLIC_TOMTOM_KEY=` и `EXPO_PUBLIC_TOMTOM_LIVE=0` с комментариями; реальные значения — только в `.env` (в `.gitignore`) |
 | `__tests__/core/tomtom-live.test.ts` | 4 теста (фаза 3, шаг 4): набор при LIVE выкл/вкл; `isTomTomLive()` включается только точным `'1'`; с набором LIVE запрос к TomTom не перехвачен, парковки перехвачены |
 | `src/core/mocks/fixtures/tomtom_route_example.json` | пример ответа из документации (1147 м / 161 с) |
-| `msw.polyfills.js` (корень) | полифиллы для `msw/native`, только для фазы 2 |
+| `msw.polyfills.js` (корень) | полифиллы для `msw/native` в приложении (под `__DEV__`, импортируется из `_layout.tsx` ДО `mocks/native`): `fast-text-encoding`, `react-native-url-polyfill/auto` из инструкции MSW + `installMswDomPolyfills` и `installMswResponseBodyShim` из `mocks/domPolyfills.ts`. В Jest не используется |
+| `src/core/mocks/domPolyfills.ts` | Без него msw не работает на телефоне (2026-09-06). `installMswDomPolyfills(g)` — `MessageEvent` (нужен `rettime`) и заглушка `BroadcastChannel` (нужен `msw/lib/core/ws`), которых нет в Hermes. `installMswResponseBodyShim(g)` — геттер `Response.prototype.body` → инициализатор тела, потому что глобальный `Response` в RN из `whatwg-fetch` и стримов не знает, а `@mswjs/interceptors` строит мок-ответ именно из `.body`. Обе идемпотентны и no-op на web. Модуль без импортов — правило «ядро без React» не нарушено |
+| `__tests__/core/domPolyfills.test.ts` | 8 тестов: классы полифиллов и их идемпотентность; воспроизведение «`msw/native` не грузится без `MessageEvent`» в изолированном реестре модулей; шим `.body` на стенд-ине (под Jest `Response` из Node — там баг структурно невоспроизводим) |
+| `scripts/msw-native-repro.cjs` | Диагностика стыка msw ↔ React Native, в `npm test` не входит (дёргает `npx tsc`, медленно). Подменяет глобалы на `whatwg-fetch` (как RN) и резолвит msw с условием `react-native` (как Metro), прогоняет два процесса: `bare` обязан воспроизвести ошибку, `fixed` — пройти calculateRoute / parkings / 403 / 204. Exit 0 = оба фикса на месте. Запускать после апгрейда `msw`, `@mswjs/interceptors`, `expo`, `react-native` |
 | `docs/API_CONTRACT.md` | контракт ядра для фазы 2: импорт, сигнатура, типы, семантика, реальные JSON, пресеты, включение моков, ограничения |
 | `__tests__/core/smoke.test.ts` | сетевой слой в Jest работает через MSW |
 | `__tests__/core/no-react-in-core.test.ts` | `src/core` не импортирует react / react-native / expo |
@@ -363,13 +402,17 @@ Tests:       132 passed, 132 total
 - Callout — штатные `title`/`description`, а не дочерний `<Callout>`.
 
 ### Что осталось `[предположение]` после фазы 3
-- **Expo Go на телефоне** — единственная непроверенная платформа с фазы 2. Карта, полилиния, `fitToCoordinates`, маркеры и `msw/native` на iOS/Android не запускались ни разу. Это главный открытый пункт.
+- ~~**Expo Go на телефоне**~~ — **СНЯТО 2026-09-06.** После двух фиксов полифиллов владелец подтвердил, что приложение на телефоне работает. Осталась мелочь, которую он не перечислял поимённо: карта, полилиния, `fitToCoordinates`, маркеры, callout, таймер 30 с, dev-переключатели. Не считать проверенным поштучно.
 - **Реальный TomTom** — код opt-in есть и покрыт тестами, живой вызов не делался. Что изменится — таблица в `API_CONTRACT.md` § 10.
 - **Тарифы TomTom** — «Free 20K monthly» для Routing API прочитано на docs.tomtom.com/pricing 2026-09-06 выжимкой WebFetch, вторым источником не подтверждено.
 - **Плашка «Выбранная парковка занята»** — покрыта Jest-тестом, но живьём не воспроизводится переключателем: при `all-full` планировщик отдаёт `conflict`, а не `ok` с занятой остановкой.
 - **`etaAt` парковки vs `at` запроса** — расхождение до ~9 мин (радиус коридора / скорость). На моке невидимо, помечено в коде и контракте.
 
 ## Сделано
+- 2026-09-06 — **Аудит безопасности перед пушем и пять правок по его итогам.** Главное `[проверено]`: ключ TomTom **никогда не был в git** — просканированы все blob-объекты, включая недостижимые, 0 совпадений; репозиторий приватный (GitHub API без авторизации отвечает 404, `git ls-remote` работает). Реальные утечки были в другом: ключ лежал открытым текстом в `.expo/dev/logs/{start,export}.log` (16+ вхождений) и печатался в консоль на каждый запрос из `src/app/_layout.tsx`, откуда одна вставка строки `[msw] POST …` в `DECISIONS.md`/`STATE.md` положила бы его в отслеживаемый файл. Отдельно `[проверено]` сборкой `expo export`: ключ вкомпилирован в production-бандл строковым литералом — это свойство префикса `EXPO_PUBLIC_`, лечится только ограничениями на стороне TomTom или прокси; попутно подтвердилось, что `msw` и лог `[msw]` в production не попадают (`if (__DEV__)` вырезается). Сделано: лог редактирует `key=***`; `.gitignore` → `.env*` + `!.env.example` (Expo читает ещё `.env.development`/`.env.production` — они не были закрыты); логи `.expo` удалены; pre-commit хук `scripts/hooks/pre-commit` + симлинк в `.git/hooks`. Файлы: `src/app/_layout.tsx`, `.gitignore`, `scripts/hooks/pre-commit` (новый), `docs/{DECISIONS,STATE}.md`. Вывод: `npm test` — **18 suites / 140 tests passed**, `npx tsc --noEmit` — exit 0, `git check-ignore` — 7/7 env-имён закрыты и `.env.example` виден, сквозной тест хука в отдельном репозитории — 4/4 сценария. После чистки ключ в дереве остался только в `.env`; `~/.expo` и история shell — чисто. **Осталось за владельцем: перевыпустить ключ и включить ограничения в кабинете TomTom.**
+- 2026-09-06 — **Expo Go на телефоне заработал.** Владелец запустил приложение после двух фиксов полифиллов и подтвердил в чате: «так всё работает». Закрывает главный `[предположение]` фаз 2 и 3 — с фазы 2 это была единственная непроверенная платформа. Код в этот заход не менялся: последним изменением был шим `Response.prototype.body` (запись ниже). Состояние дерева на момент подтверждения: `npm test` — 18 suites / 140 tests passed, `npx tsc --noEmit` — exit 0, `node scripts/msw-native-repro.cjs` — exit 0.
+- 2026-09-06 — **Фикс второго падения в Expo Go: `JSON Parse error: Unexpected end of input`.** Первый фикс сработал (msw/native загрузился, в логе телефона `[msw] POST …/calculateRoute`), но мок-ответ пришёл 200 с пустым телом. Причина: глобальный `Response` в RN 0.86 — из `whatwg-fetch`, стримов не знает, `Response.prototype.body` нет; Expo SDK 57 подменяет только `fetch`, а `@mswjs/interceptors` строит мок-ответ ровно из `raw.body`. Файлы: `src/core/mocks/domPolyfills.ts` (+`installMswResponseBodyShim`, +`ResponseGlobals`), `msw.polyfills.js` (вызов), `__tests__/core/domPolyfills.test.ts` (+4 теста на стенд-ине), `scripts/msw-native-repro.cjs` (новый, диагностический), `docs/{DECISIONS,API_CONTRACT § 6,STATE}.md`. Вывод: `npm test` — **18 suites / 140 tests passed**, `npx tsc --noEmit` — exit 0, `node scripts/msw-native-repro.cjs` — exit 0 (`bare` воспроизводит ошибку, `fixed` проходит calculateRoute / parkings / 403 / 204). **Не проверено: сам Expo Go после фикса.**
+- 2026-09-06 — **Фикс падения в Expo Go: `Property 'MessageEvent' doesn't exist`.** Причина: `msw` 2.15 требует DOM-классы уже при загрузке модулей (`rettime` → `class TypedEvent extends MessageEvent`; `msw/lib/core/ws` → `new BroadcastChannel(...)` на верхнем уровне, его тянет любой `import { http } from 'msw'`), а RN 0.86 глобально ставит только `Event`, `EventTarget`, `CustomEvent`. Файлы: `src/core/mocks/domPolyfills.ts` (новый, чистая `installMswDomPolyfills(globalThis)`), `msw.polyfills.js` (вызов после двух существующих импортов), `__tests__/core/domPolyfills.test.ts` (новый, 4 теста, включая воспроизведение: без полифиллов `require('msw/native')` бросает `/MessageEvent/`, с ними — `setupServer` работает), `docs/{DECISIONS,API_CONTRACT § 6,STATE}.md`. Проверено grep, что полифиллы в `_layout.tsx` успевают: ни один модуль маршрута не тянет `msw` на верхнем уровне. Вывод: `npm test` — **18 suites / 136 tests passed**, `npx tsc --noEmit` — exit 0 (в первой версии теста было 3 ошибки `TS2508`/`TS2339` из-за `typeof MessageEvent`, исправлено локальным типом конструктора). **Не проверено: сам Expo Go после фикса** — это за владельцем.
 - 2026-09-05 — Шаг 1: скелет Expo SDK 57 (шаблон default, Expo Router в `src/app/`), Jest `projects` + `jest-expo/node`, MSW 2.15 (`msw/node` в тестах, `msw/native` — только экспорт), `babel.config.js`, `tsconfig` с `types`. Файлы: `package.json`, `jest.config.js`, `jest.setup.ts`, `babel.config.js`, `msw.polyfills.js`, `src/core/mocks/{handlers,server,native}.ts`, `__tests__/core/{smoke,no-react-in-core}.test.ts`, `.gitignore` (+`.env`). Вывод: `npm test` — 2 suites, 3 tests passed; `npm run typecheck` — exit 0.
 - 2026-09-05 — Шаг 2: схема TomTom прочитана из исходного HTML документации (точные цитаты — в `DECISIONS.md` и в JSDoc). Файлы: `src/core/types.ts`, `src/core/api/types.ts`, `src/core/mocks/fixtures/tomtom_route_example.json` (из примера убраны 5 плейсхолдеров `...further...`, добавлены 2 запятые — опечатка документации), `__tests__/core/tomtom.test.ts`. Вывод: `npm test` — 3 suites, 4 tests passed; `npm run typecheck` — exit 0.
 - 2026-09-05 — Шаг 3: `src/core/api/tomtom.ts`, `src/core/geo.ts`, `src/core/mocks/routeGenerator.ts`, handler TomTom в `mocks/handlers.ts`, `__tests__/core/tomtom.test.ts` (5 тестов: без waypoints; с 2 waypoints и паузой 2700 → тело `[2700, 2700, 0]`, 3 плеча, даты с паузами; без ключа; валидация мока; фикстура). Вывод: `npm test` — 3 suites, 8 tests passed; `npm run typecheck` — exit 0.
@@ -392,12 +435,13 @@ Tests:       132 passed, 132 total
 - 2026-09-05 — Фаза 2, шаги 5–6: `src/app/result.tsx` — карточка ok («Прибытие HH:MM», «Вождение H:MM · N перерыва · По норме», при `requiresDailyRest` — «Нужен суточный отдых» + предупреждение), лента (старт, «↓ … вождения», остановки: время, парковка, «перерыв 45 мин», «свободно N из M на HH:MM», «сейчас/прогноз», последнее плечо, финиш), красная карточка conflict (`reason`, плановая остановка из `anchor`, `nearestFreeParking`, «Выехать раньше» → `/` с `departureAt − 30 мин`, «Другая парковка» → «Скоро»), «Новый маршрут» → `resetTrip` + `/`. Экран 1: параметр `departureAt` → чип «в HH:MM», `Switch` читает `getMockScenario()`. `src/ui/text.ts` (`pluralRu` + 7 тестов), стор `setTripState`. Тесты: `__tests__/screens/fixtures.ts` (JSON из контракта § 5, генерируется скриптом), `result.test.tsx` (6), `conflict.test.tsx` (4), в `input.test.tsx` + тест dev-переключателя через MSW (красная карточка). Проверено: `npm test` 14 suites / 101 tests, `tsc` exit 0; в браузере (web): кнопка → экран 2 → экран 3 с картой ответа и лентой на 2 остановки (реальный вывод мока, ночной выезд: «свободно 5 из 57»).
 
 ## Сейчас в работе
-Ничего. Фаза 3 закрыта целиком (8/8). В git не закоммичено ничего (фазы 1–3 в рабочем дереве на `master`; `.env` в `.gitignore`, `.env.example` — в коммит). В git не закоммичено ничего (фазы 1–3 в рабочем дереве на `master`; `.env` в `.gitignore`, `.env.example` — в коммит). В git не закоммичено ничего (фазы 1–3 целиком в рабочем дереве на `master`; `.env` в `.gitignore`).
+Ничего. Фаза 3 закрыта целиком (8/8), оба фикса полифиллов сделаны, Expo Go на телефоне подтверждён владельцем.
+В git: фазы 1–3 закоммичены (`b67d28b`, 43 файла в `src/`) — прежняя формулировка «не закоммичено ничего» устарела, проверено `git ls-tree`. Не закоммичены: оба фикса полифиллов (`src/core/mocks/domPolyfills.ts`, `msw.polyfills.js`, `__tests__/core/domPolyfills.test.ts`, `scripts/msw-native-repro.cjs`), правки безопасности (`src/app/_layout.tsx`, `.gitignore`, `scripts/hooks/pre-commit`) и документы. `.env` в `.gitignore`, `.env.example` — в коммит.
 
 ## Следующий шаг
 Решает владелец. Открыто:
-1. **Expo Go на телефоне** — `npx expo start`, пресет Варшава → Франкфурт. Закрывает главный `[предположение]` фаз 2 и 3 разом: `msw/native` на iOS/Android и вся карта (полилиния, маркеры, `fitToCoordinates`, callout, таймер, переключатель «Мок: live»).
-2. **Коммит** фаз 1–3 (сейчас всё в рабочем дереве на `master`, ни одного коммита).
+1. **Перевыпустить ключ TomTom и включить ограничения.** Ключ засветился трижды: в переписке, в `.expo/dev/logs/*.log` и — необратимо — в production-бандле (`EXPO_PUBLIC_` инлайнится литералом, проверено `expo export`). В отслеживаемые файлы он не попадал ни разу, но приватным не является. Со стороны кода утечка закрыта (лог редактирует `key=***`, логи удалены). **Порядок важен: фикс лога уже есть, теперь перевыпуск — если сделать наоборот, следующий `expo start` сожжёт и новый ключ.** Второе действие в том же кабинете: проверить, поддерживает ли тип ключа ограничение по домену/bundle-id, и включить. Если не поддерживает — единственная защита это прокси-бэкенд, держащий ключ у себя. Кода не касается.
+2. **Коммит** фаз 1–3 и обоих фиксов полифиллов. Сейчас всё в рабочем дереве локальной ветки `main` (на ней 2 коммита: `Initial commit` и `Convoy Mind MVP`), у origin есть и `main`, и `master`, `origin/HEAD` смотрит на `master` — перед пушем спросить владельца, куда.
 3. **Реальный TomTom**: проверить квоту в личном кабинете, поставить `EXPO_PUBLIC_TOMTOM_LIVE=1` в `.env`, перезапустить — полилиния должна пойти по дорогам.
 
 
@@ -449,7 +493,7 @@ Tests:       62 passed, 62 total
 `npm run typecheck` (`tsc --noEmit`) — exit 0. Критерий «работает» из `PHASE1_CORE.md`: оба сквозных теста (happy path, конфликт) — в `__tests__/core/schedule.test.ts`, только через MSW (`onUnhandledRequest: 'error'`).
 
 ## Открытые вопросы ко мне
-- **Expo Go на телефоне.** Заводится ли `msw/native` на iOS/Android и как выглядит карта (полилиния, маркеры, `fitToCoordinates`, callout, таймер). Единственная непроверенная платформа с фазы 2. Если что-то не так — первый вопрос следующей сессии, не чинить молча.
+- **Что именно смотрели на телефоне.** Владелец сказал «так всё работает» — этого хватает, чтобы снять главный `[предположение]`, но поштучно не подтверждены: полилиния маршрута, маркеры парковок и их цвета, `fitToCoordinates`, callout по тапу, обновление раз в 30 с с подписью «обновлено HH:MM:SS», dev-переключатели «все парковки заняты» / «live». Если следующий шаг их трогает — сначала спросить, как они выглядят сейчас, а не считать проверенными.
 - Коммитить ли фазы 1–3 одним коммитом или по фазам. Сейчас в репозитории один коммит `Initial commit`, всё остальное — рабочее дерево.
 - Включать ли `EXPO_PUBLIC_TOMTOM_LIVE=1` (ключ в `.env` уже настоящий). Перед этим — проверить квоту в личном кабинете TomTom.
 - Язык UI: экраны на русском, как в `PHASE2_APP.md`; при переводе проекта на английский строки разбросаны по трём экранам и `src/ui/{text,routeMap*}.ts(x)` (файла строк нет — MVP).
@@ -458,12 +502,13 @@ Tests:       62 passed, 62 total
 ## Оставшиеся `[предположение]` (проверить или оставить помеченными)
 - В моке `routes[].summary.travelTimeInSeconds` не включает паузы; как в реальном API — неизвестно. Ядро от этого не зависит.
 - Причина, по которой TypeScript 6.0.3 не подхватывал `@types/*` без явного `types` в tsconfig, не подтверждена; симптом и лечение проверены.
-- `msw/native` на iOS/Android (Expo Go) не запускался: на web Metro резолвит его через fallback, на native condition `react-native` должен матчиться напрямую. Проверить в Expo Go.
+- ~~`msw/native` на iOS/Android (Expo Go) не запускался~~ — **СНЯТО 2026-09-06**: запустился после двух фиксов полифиллов, в логе телефона видны строки `[msw] …`. Резолв через condition `react-native` работает; два бага, которые при этом вылезли, разобраны в блоке «Что случилось на телефоне» выше.
 - Реальный TomTom отдаёт даты с оффсетом точки отправления, а не в UTC, как мок; экран форматирует через `Date.parse` → локальное время, от этого не зависит.
 - Параметр `departureAt` в URL (`+02:00` → `%2B`) на web проверен; на native deep-link не проверялся, но параметр приходит только из `router.replace` внутри приложения.
+- **Ключ TomTom скомпрометирован 2026-09-06**: ушёл в переписку в открытом виде внутри URL из лога Metro. В трекаемые файлы не попадал (`.env` в `.gitignore`). Перевыпустить в кабинете TomTom — пункт 1 в «Следующий шаг».
 
 Добавлено фазой 3:
-- **Карта на устройстве не запускалась вообще.** `MapView`, `Polyline`, `Marker`, `fitToCoordinates`, callout — только под Jest-моком и в web-варианте-списке. API прочитан по `node_modules`, но поведение на экране телефона не видел никто.
+- **Карта на устройстве: запустилась, но поштучно не сверялась.** 2026-09-06 владелец дошёл до экрана 3 на телефоне и сказал «всё работает». `MapView`, `Polyline`, `Marker`, `fitToCoordinates`, callout по отдельности никто не описывал — считать «работает в целом», а не «каждый элемент проверен».
 - **Реальный TomTom не вызывался.** Код opt-in покрыт тестами; что изменится в данных — таблица в `API_CONTRACT.md` § 10.
 - **Тарифы TomTom**: «Free 20K monthly» для Routing API — выжимка WebFetch с docs.tomtom.com/pricing (2026-09-06), вторым источником не подтверждено.
 - **Плашка «Выбранная парковка занята»** живьём не воспроизводится: при `all-full` планировщик отдаёт `conflict`, а не `ok` с занятой остановкой. Только Jest-тест.

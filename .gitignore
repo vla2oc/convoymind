@@ -31,7 +31,10 @@ yarn-error.*
 *.pem
 
 # local env files
-.env*.local
+# Всё .env*, кроме шаблона. Expo читает .env, .env.local, .env.development, .env.production —
+# раньше закрыты были только .env и .env*.local, остальные ушли бы в коммит вместе с ключом.
+.env*
+!.env.example
 
 # typescript
 *.tsbuildinfo
@@ -41,6 +44,3 @@ example
 # generated native folders
 /ios
 /android
-
-# TomTom key (EXPO_PUBLIC_TOMTOM_KEY)
-.env

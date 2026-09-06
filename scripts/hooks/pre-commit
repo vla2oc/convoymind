@@ -1,0 +1,40 @@
+#!/bin/sh
+# Последний барьер перед коммитом секрета. Ставится в .git/hooks/pre-commit:
+#   ln -sf ../../scripts/hooks/pre-commit .git/hooks/pre-commit
+#
+# Обходится через `git commit --no-verify` и не переезжает при клонировании (.git/hooks не
+# версионируется) — это подстраховка от невнимательности, а не защита. См. docs/DECISIONS.md.
+
+fail=0
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+
+# 1. Сами .env-файлы. Шаблон .env.example — единственное исключение.
+for f in $staged; do
+  case "$f" in
+    .env.example) ;;
+    .env|.env.*|*/.env|*/.env.*)
+      echo "pre-commit: в индексе env-файл: $f"
+      fail=1
+      ;;
+  esac
+done
+
+# 2. Секреты в содержимом. Проверяется версия из индекса, а не с диска.
+# Значение обязано выглядеть как настоящий секрет (16+ символов ключевого алфавита), иначе
+# хук ловит саму документацию — `EXPO_PUBLIC_TOMTOM_KEY=...` в docs/ — и приучает жать --no-verify.
+patterns='(^|[?&])key=[A-Za-z0-9_-]{20,}|EXPO_PUBLIC_[A-Z0-9_]*KEY=[A-Za-z0-9_-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}'
+for f in $staged; do
+  hit=$(git show ":$f" 2>/dev/null | grep -In -E -m 3 "$patterns")
+  if [ -n "$hit" ]; then
+    echo "pre-commit: похоже на секрет в $f:"
+    echo "$hit" | cut -c1-120 | sed 's/^/    /'
+    fail=1
+  fi
+done
+
+if [ "$fail" -ne 0 ]; then
+  echo ""
+  echo "Коммит остановлен. Если это ложное срабатывание — git commit --no-verify"
+  exit 1
+fi
+exit 0

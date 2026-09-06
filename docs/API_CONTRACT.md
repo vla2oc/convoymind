@@ -320,7 +320,11 @@ const parkings = await getParkingsAlongRoute({
 ## 6. Как включить моки в приложении
 
 Файлы (уже есть):
-- `msw.polyfills.js` (корень) — полифиллы из официальной инструкции MSW для React Native; импортировать **до** `msw/native`.
+- `msw.polyfills.js` (корень) — полифиллы; импортировать **до** `msw/native`. Три штуки:
+  `fast-text-encoding` и `react-native-url-polyfill/auto` из официальной инструкции MSW,
+  плюс `installMswDomPolyfills(globalThis)` и `installMswResponseBodyShim(globalThis)` из
+  `src/core/mocks/domPolyfills.ts` — без первого на телефоне падает «Property 'MessageEvent' doesn't
+  exist», без второго мок-ответ приходит с HTTP 200 и пустым телом (см. ниже).
 - `src/core/mocks/native.ts` — `server` из `msw/native` с теми же handlers, что в тестах (TomTom + Parking-API).
 - `src/core/mocks/scenario.ts` — `setMockScenario('all-full' | null)`, `getMockScenario()`.
 
@@ -335,6 +339,27 @@ if (__DEV__) {
 ```
 
 - `require` внутри блока, а не `import` наверху: `import` поднимается и ломает порядок «полифиллы → msw/native».
+- **DOM-классы, которых нет в Hermes.** `msw` 2.15 требует их уже при загрузке модулей, до любого запроса:
+  зависимость `rettime` объявляет `class TypedEvent extends MessageEvent`, а `msw/lib/core/ws` на верхнем
+  уровне делает `new BroadcastChannel(...)` (его тянет любой `import { http } from 'msw'`). RN 0.86 ставит
+  глобальные `Event`, `EventTarget`, `CustomEvent` (`react-native/src/private/setup/setUpDOM.js`), но
+  `MessageEvent` и `BroadcastChannel` — нет. Это ставит `installMswDomPolyfills` (идемпотентна: на web,
+  где оба класса есть, ничего не делает). Известная проблема msw в RN: https://github.com/mswjs/mswjs.io/issues/453.
+- **Глобальный `Response` в RN не спецификационный.** Он из `whatwg-fetch`
+  (`react-native/Libraries/Network/fetch.js`), построен на XMLHttpRequest, стримов не знает:
+  `Response.prototype.body` не существует. Expo SDK 57 подменяет только глобальный `fetch`
+  (`expo/src/winter/runtime.native.ts`), `Response` оставляет от RN. А `@mswjs/interceptors` собирает
+  мок-ответ как `new FetchResponse(decompressResponse(raw) || raw.body, …)` — телом становится
+  `undefined`, клиент получает 200 с пустой строкой и падает на `res.json()`
+  («JSON Parse error: Unexpected end of input»). Это чинит `installMswResponseBodyShim`: геттер
+  `.body` отдаёт инициализатор тела (строку/Blob/`null`), а не `ReadableStream`. Ставится только
+  если геттера нет — на web no-op. Граница: шим перестанет работать, если появится handler,
+  использующий `finalize` (стриминг/SSE) — подробности в JSDoc функции.
+- Порядка «полифиллы в `_layout.tsx`» достаточно, потому что **ни один модуль маршрута не тянет `msw` на
+  верхнем уровне**: `@/core/index.ts` моки не экспортирует, `scenario.ts` вообще без импортов, а
+  `mocks/{handlers,server,native}.ts` вне `mocks/` никто не импортирует, кроме `_layout.tsx`
+  (проверено grep 2026-09-06). Если это перестанет быть правдой — Expo Router вычисляет модули маршрутов
+  при старте, и полифиллы придётся вынести в entry-шим перед `expo-router/entry`.
 - `onUnhandledRequest: 'bypass'` — запросы Metro/Expo мимо handlers проходят как есть (в Jest стоит `'error'`).
   Допустимые значения `'bypass' | 'warn' | 'error'` — проверено по типам msw 2.15.0.
 - Dev-переключатели сценариев из `@/core/mocks/scenario`, сброс — `setMockScenario(null)`:
@@ -352,8 +377,15 @@ if (__DEV__) {
   мок проверяет только наличие. Без ключа `planTrip` бросает ошибку до сети. Шаблон — `.env.example` (в git).
 - Рецепт проверен 2026-09-05 на web (`expo start --web`, Chrome): перехват работает, в консоли Metro `[msw] GET …/parkings`.
   Metro при этом пишет WARN «Falling back to file-based resolution» для `msw/native` и `@mswjs/interceptors/*` — ожидаемо
-  (см. `DECISIONS.md`). `[предположение]` На iOS/Android (Expo Go) ещё не запускалось — condition `react-native` должен
-  резолвить `msw/native` напрямую, без fallback. Проверить: Expo Go, пресет Варшава → Франкфурт, `ok` с 2 остановками.
+  (см. `DECISIONS.md`).
+- `[подтверждено владельцем]` **Сквозной сценарий в Expo Go проходит (2026-09-06).** Не `[проверено]`:
+  запускал и смотрел владелец, у агента симуляторов нет.
+  Хронология того дня: первый запуск упал на `Property 'MessageEvent' doesn't exist`; второй — на
+  `JSON Parse error: Unexpected end of input`; после обоих фиксов владелец сообщил, что приложение
+  работает. Поэлементно (полилиния, маркеры, `fitToCoordinates`, callout, таймер) не сверялось.
+  Регрессию этого стыка ловит `node scripts/msw-native-repro.cjs`: глобалы whatwg-fetch, резолв msw
+  с условием `react-native`, вариант `bare` обязан воспроизвести ошибку, `fixed` — пройти.
+  Запускать после апгрейда `msw`, `@mswjs/interceptors`, `expo` или `react-native`.
 
 ## 7. Чего не делать при работе над экранами
 
