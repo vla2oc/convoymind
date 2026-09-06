@@ -4,7 +4,11 @@ if (__DEV__) {
   require('../../msw.polyfills');
   const { server } = require('@/core/mocks/native');
   server.events.on('request:start', ({ request }: { request: Request }) => {
-    console.log(`[msw] ${request.method} ${request.url}`);
+    // Ключ TomTom едет в query (?key=…). Без замены он попадал в Metro-логи, в .expo/dev/logs
+    // и в любую вставку этих строк в docs/. Остальные параметры оставляем — по ним и отлаживаем.
+    const url = new URL(request.url);
+    if (url.searchParams.has('key')) url.searchParams.set('key', '***');
+    console.log(`[msw] ${request.method} ${url}`);
   });
   server.listen({ onUnhandledRequest: 'bypass' });
 }
